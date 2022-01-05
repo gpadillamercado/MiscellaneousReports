@@ -1,0 +1,151 @@
+---
+title: "Winter COVID Data Project"
+author: "Gilberto Padilla Mercado"
+output:
+  html_document:
+    df_print: paged
+---
+
+## Introduction
+
+Hello!
+Here I present a brief recounting of the COVID-19 cases and deaths in the U.S.
+from March 2020 to December 23rd 2021,
+adding a timeline of some relevant events from those two years.
+This data was taken from the CDC website, and can be found there.  
+
+First we need to load the necessary packages and the data.
+I will be using a select number of packages from the tidyverse
+and svglite.
+
+```{r, message=FALSE,warning=FALSE}
+library(knitr)
+library(lubridate)
+library(readr)
+library(magrittr)
+library(dplyr)
+library(stringr)
+library(ggplot2)
+library(svglite)
+
+```
+
+The CDC data on COVID-19 can be found
+[here](https://data.cdc.gov/Case-Surveillance/United-States-COVID-19-Cases-and-Deaths-by-State-o/9mfq-cb36) saved here as `covid`,
+and the `timeline` is part of the
+[online CDC museum](https://www.cdc.gov/museum/timeline/covid19.html).  
+
+As this data loads in,
+I also make sure the timeline is processed into Date format.
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+covid <- read_csv("United_States_COVID-19_Cases_and_Deaths_by_State_over_Time-2.csv")
+timeline <- read_csv("CDCtimeline.csv",
+                     col_names = c("Day", "Event")) %>%
+  mutate(Day = strptime(Day, format = "%Y-%m-%d"))
+knitr::kable(head(timeline))
+```
+
+I also parse through the longitudinal data into date format.
+To label the important dates in the timeline,
+I also convert the POSIXct into a numeric.
+
+```{r, warning=FALSE,message=FALSE}
+covid_parsed <- covid %>% mutate(submission_date = strptime(submission_date,
+                                                     format = "%m/%d/%Y"),
+                          created_at = strptime(created_at,
+                                                format = "%m/%d/%Y %H:%M:%S %p"))
+
+timeline_parsed <- as.numeric(ymd(timeline$Day))
+```
+
+## Summarizing and plotting the data  
+The data are ready to be summarized.
+There are many potential data-points to visualize,
+but I was particularly interested in new and total counts of cases and deaths,
+to really understand the tremendous impact of the pandemic.  
+
+```{r,warning=FALSE,message=FALSE}
+covid_parsed <- covid_parsed %>%
+    group_by(state, week = floor_date(submission_date, unit = "week")) %>%
+    summarize(med_cases_new = median(new_case),
+              med_deaths_new = median(new_death),
+              med_cases_tot = median(tot_cases),
+              med_deaths_tot = median(tot_death)) %>% ungroup()
+```
+
+I've made a ggplot2 function which will make it easier to plot each plot.
+I don't include any geoms or aesthetics that we might want to change for each plot.
+
+```{r PlotFunction}
+timeplot <- ggplot(data = covid_parsed, aes(x = as.Date(week),
+                          group = as.factor(state),
+                          fill = as.factor(state))) +
+  scale_fill_viridis_d(option = "magma") +
+  xlab("") + ylab("") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(hjust = 1, angle = 45),
+    axis.line = element_line(color = "black", size = 1, lineend = "square"),
+    panel.grid = element_blank(),
+    panel.grid.major.y = element_line(color = "lightgray", size = 1),
+    legend.position = "none"
+    ) 
+
+
+```
+
+Here is the first plot I generate, looking at the median new cases for every week.
+
+```{r Plot1, message=FALSE}
+timeplot + labs(title = "Median Weekly Cases") +
+  geom_area(aes(y = med_cases_new)) +
+  scale_x_date(date_breaks = "3 month", date_labels = str_to_upper("%b %Y")) +
+  scale_y_continuous(labels = scales::unit_format(unit = "K", scale = 1e-3),
+                       expand = c(0, NA)) +
+  geom_vline(xintercept = timeline_parsed, col = "black", lwd = 0.5)
+
+
+ggsave("MedianTotalCases_Tutorial.svg", device = "svg", height = 5, width = 8)
+```
+
+We can save this for later as an scalable vector graphic, or `svg` file,
+before importing it into Illustrator to work on it some more.  
+
+This second plot does not include the vertical lines looking at events.
+
+```{r Plot2}
+timeplot + labs(title = "Median Total Cases") +
+  geom_area(aes(y = med_cases_tot)) +
+  scale_x_date(date_breaks = "3 month", date_labels = str_to_upper("%b %Y")) +
+  scale_y_continuous(labels = scales::unit_format(unit = "M", scale = 1e-6),
+                       expand = c(0, NA))
+```
+
+Instead of plotting the weekly cases,
+this shows the cumulative number of total cases over time.
+This is actually an imperfect measure due to counting any person that was or is
+COVID-19 positive, which can happen multiple times.
+To take a more accurate look at the tragedy that COVID-19 precipitated,
+we can take a look at cumulative deaths over time,
+since there is a far lower chance of any double counting.
+
+```{r Plot3}
+timeplot + labs(title = "Median Total Deaths") +
+  geom_area(aes(y = med_deaths_tot)) +
+  scale_x_date(date_breaks = "3 month", date_labels = str_to_upper("%b %Y")) +
+  scale_y_continuous(labels = scales::unit_format(unit = "K", scale = 1e-3),
+                       expand = c(0, NA)) 
+```
+
+
+Finally after annotating our first plot in a vector graphics program
+(I used Illustrator) we are able to get a fully annotated plot.
+
+![Final Annotated Graphic](MedianWeeklyCases_FullyAnnotated.png)
+
+
+```{r}
+sessionInfo()
+```
