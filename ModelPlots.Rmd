@@ -1,0 +1,246 @@
+---
+title: "Plotting Model Fits"
+author: "Gilberto Padilla Mercado"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Plotting modelling functions with observed data
+
+This will have 2 models analyzed 2 different ways
+Model1 = How much volume has a cylinder lost at a certain time?
+Model1 parameters = radius, initial height, height rate of change
+Model2 = How tall is liquid filling a semi-spherical after a certain time?
+Model2 parameters = max radius, volume rate of change
+
+Model1 is given by:
+
+$$
+f(t) = \pi r^2h_0 - \pi r^2\frac{dh}{dt}\cdot t 
+$$
+
+Model2 is given by:
+
+$$
+g(t) = \frac{dV}{dt}\cdot\frac{t}{2\pi r^2}
+$$
+
+First I will make a simple data.frame with simple parameter entries for each fit.
+The way they are fit are arbitrary, I just want to see how I can combine it later with
+the observed data into one plot.
+There are three situations: one where only Model1 is fit, one where both Models are fit,
+and one where only Model2 is fit.
+So there are 2 x 3 = 6 rows in the fits.
+
+For the observed data, lets say that there is four nonstandard time-points per situation,
+for each type of measurements.
+There are four measurement events by four time-points... meaning 16 different observations.
+
+The values are volume or rate of change for radius for Model1 and Model2, respectively.
+
+```{r}
+# Load Packages ----
+{
+library(tidyverse)
+library(gridExtra)
+set.seed(1010)
+}
+
+# Initial height for Model1 is constant at 20
+height_init <- 20
+
+# Recorded fit parameters -----
+fit_df <- data.frame(
+  Situation = rep(LETTERS[1:3], each = 2),
+  Fit_type = rep(c("Arb1", "Arb2"), 3),
+  radius.Model1 = c(rnorm(2, 5), rnorm(2, 4.5), NA, NA),
+  height_rc.Model1 = c(rnorm(2, 0.25, 0.1), rnorm(2, 0.5, 0.1), NA, NA),
+  radius.Model2 = c(NA, NA, rnorm(2, 1, 0.1), rnorm(2, 1.4, 0.2)),
+  volume_rc.Model2 = c(NA, NA, rnorm(2, 1, 0.02), rnorm(2, 1.3, 0.02))
+)
+
+
+obs_df <- data.frame(
+  Situation = c(rep("A", 4), rep("B", 8), rep("C", 4)),
+  Model = c(rep("Model1", 8), rep("Model2", 8)),
+  Measurement = c(60, 50, 40, 30,
+                  48, 40, 35, 25,
+                  0, 0.1, 0.2, 0.4,
+                  0, 0.2, 0.5, 0.6),
+  Timepoint = c(rep(c(0, 2, 4, 8), 2), rep(c(0, 1, 2, 3), 2))
+)
+
+```
+
+Now we have our two data sets.
+Next we try to split the Model and Estimates in `fit_df`.
+
+```{r}
+fit_df <- fit_df %>%
+  pivot_longer(cols = contains(".Model"),
+               names_to = "EstimateName.FitModel",
+               values_to = "Estimate") %>%
+  separate_wider_delim(cols = EstimateName.FitModel,
+                       delim = ".",
+                       names = c("EstimateName", "FitModel"))
+
+```
+
+At this point `fit_df` is ready to be merged with the observation data.
+It must then be filtered by where Model == FitModel and nested by the Observation data
+and the FitEstimates.
+Finally, the estimates must be pivoted so that each parameter has it's own column.
+
+```{r}
+combo_df <- fit_df %>% left_join(obs_df, by = "Situation",
+                                 relationship = "many-to-many") %>%
+  filter(Model == FitModel) %>%
+  nest(observations = c(Measurement, Timepoint),
+       fits = c(EstimateName, Estimate)) %>%
+  mutate(fits = map(fits, distinct), # Values were doubled during the join
+         fits = map(fits, deframe), # deframe converts two-column data.frames into named list
+         fits = map(fits, unlist),
+         fits = map(fits, as.list),
+         fits = map(fits, as_tibble),
+         param_model = paste(Fit_type,
+                             FitModel)) %>%
+  group_by(Situation, Fit_type, Model) # These columns uniquely identify the columns
+# The above is incredibly important!!!
+
+# Example
+combo_df$fits[[1]]
+```
+
+Once our data is in order, I will write the functions that define each of our models.
+In the chunk below they are displayed as plots using the `stat_function` function.
+
+```{r}
+
+# Model1
+ggplot() +
+  stat_function(
+    fun = function(t, radius, height_roc) {
+      pi*(radius^2)*(height_init - (height_roc*t))
+      }, args = list(radius = 1, height_roc = 0.5)
+  ) +
+  xlim(0, 10)
+
+# Model2
+ggplot() +
+  stat_function(
+    fun = function(t, radius, volume_roc) {
+      volume_roc * t / (2 * pi * (radius^2))
+      }, args = list(radius = 1, volume_roc = 1.2)
+  ) +
+  xlim(0, 10)
+```
+
+If we generalize these to just a formula.
+
+```{r}
+m1_fun <- function(t, radius, height_roc) {
+      pi*(radius^2)*(height_init - (height_roc*t))
+}
+
+m2_fun <- function(t, radius, volume_roc) {
+      volume_roc * t / (2 * pi * (radius^2))
+}
+
+```
+
+
+Finally, it is time to combine these two using `map2` from the `purrr` package.
+
+```{r}
+
+combined_plots <- combo_df %>%
+  mutate(combo_plot = map2(.x = observations,
+                           .y = fits,
+                           .f = (\(.x, .y) {
+                             ggplot(data = .) +
+                               geom_point(data = .x,
+                                          aes(x = Timepoint, y = Measurement)) +
+                               {
+                                 if (Model == "Model1") {
+                                   stat_function(fun = function(tp, radius, height_roc) {
+                                     pi * (radius^2) * (20 - (height_roc * tp))
+                                   },
+                                   args = list(
+                                     radius = .y[["radius"]],
+                                     height_roc = .y[["height_rc"]])
+                                   )
+                                 } else {
+                                   stat_function(fun = function(tp, radius, volume_roc) {
+                                     volume_roc * tp / (2 * pi * (radius^2))
+                                   },
+                                   args = list(
+                                     radius = .y[["radius"]],
+                                     volume_roc = .y[["volume_rc"]])
+                                   )
+                                 }
+                               } + 
+                               labs(title = paste(Situation, Model)) +
+                               xlim(0, 10) +
+                               theme_bw() +
+                               theme(aspect.ratio = 1)
+                           }
+                           ), .progress = TRUE
+  ))
+
+# Issue with if (model == "Model1") conditon has length > 1
+# Does ifelse solve this? No, it needed to be grouped by unique identifying columns
+
+# However, I think now that the different arguments for Model1 and Model2 are causing
+# a recycling error! :(
+
+# Trying to filter out just Model1 to see if that works (no conditional statement)
+combined_plots <- combo_df %>%
+  filter(Model == "Model1") %>%
+  select(-Fit_type, -param_model) %>% distinct() %>%
+  mutate(combo_plot = map2(.x = observations,
+                           .y = fits,
+                           .f = (\(.x, .y) {
+                             ggplot(data = .) +
+                               geom_point(data = .x,
+                                          aes(x = Timepoint,
+                                              y = Measurement)
+                               ) +
+                               stat_function(
+                                 fun = function(x, radius, height_roc) {
+                                   pi * (radius^2) * (20 - (height_roc * x))
+                                 },
+                                 args = list(
+                                   radius = .y[["radius"]],
+                                   height_roc = .y[["height_roc"]])
+                               ) + 
+                               labs(title = paste(Situation, Model)) +
+                               xlim(0, 10) +
+                               theme_bw()
+                           }
+                           )
+  ))
+# Still getting the recycling error
+```
+
+Next I need to combine all the plots saved in `combo_plot` in a list.
+For this I will use `summarize`.
+
+
+```{r}
+grid_combo <- combined_plots %>%
+  group_by(Situation) %>%
+  summarize(grid_plots = list(combo_plot))
+
+for (i in 1:nrow(grid_combo)) {
+  grid.arrange(grobs = grid_combo$grid_plots[[i]],
+               nrow = 1,
+               top = paste("This is ",
+                           grid_combo$Situation[[i]]))
+}
+
+```
+
