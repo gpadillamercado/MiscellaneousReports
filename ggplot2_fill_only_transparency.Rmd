@@ -1,0 +1,86 @@
+---
+title: "Fill Toggle in `ggplot2`"
+author: "Gilberto Padilla Mercado"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+## Data Preparation
+
+First I prepare the data so that relevant variables are factors.
+In this example, I will be plotting `hp` on the y-axis and `mpg` on the x-axis.
+Color **and** fill will be defined by `cyl` and shape by `gear`.
+`vs` is a variable here that will determine whether a data point will be solid or hollow.
+I will use `am` as a facet during plotting.
+
+```{r data_prep}
+df <- mtcars %>% rownames_to_column("model") %>% 
+  mutate(cyl = factor(cyl),
+         vs  = ifelse(vs, "Straight", "V-shaped"),
+         gear = factor(gear),
+         am = factor(am)) %>%
+  as_tibble()
+
+glimpse(df)
+summary(df)
+```
+
+## Plotting
+
+Below I initialize the plot and assign it to `pl`.
+I begin by setting the `aes` mappings for `x`, `y`, `color`, and `shape`.
+Next I add a `geom_point` that has extra mappings of `fill` and `alpha`.
+Note that `fill` and `color` for this geom layer are mapped to the same column, `cyl`.
+`alpha`, which controls the transparency, is mapped to a binary variable
+(only has 0 and 1 values) and is converted to a character.
+This means that if `vs == 1` then this point will be fully visible and if `vs == 0`
+it will be invisible.
+Finally, a `geom_point` layer is added to the plot that can only have unfilled points.
+
+
+```{r initial_plot}
+pl <- ggplot(df,
+       aes(
+         x = mpg,
+         y = hp,
+         color = cyl,
+         shape = gear
+       )) +
+  geom_point(aes(
+    fill = cyl,
+    alpha = vs
+  )) +
+  geom_point()
+
+```
+
+We next need to specify a few things for this all to work.
+First in `scale_alpha_manual`, I specify the values using a named vector.
+In `scale_shape_manual`, I specify the shapes that this is allowed to be
+(only those that can have both color and fill) and rename the legend.
+In the `guides` layer, I specify that the elements in the `shape` legend should
+be filled in and that `alpha` legend keys should be fully visible,
+simulating the empty shapes by setting fill to `c("white", "black")`.
+Do note that the order here is important, it must follow the order of `values`
+in `scale_alpha_manual` or the legend will confuse the reader.
+
+```{r scales_guides}
+pl +
+  scale_alpha_manual(values = c("V-shaped" = 0, "Straight" = 1),
+                     breaks = c("V-shaped", "Straight"),
+                     name = "Engine") +
+  scale_shape_manual(values = 21:25,
+                     name = "Number of forward gears") +
+  guides(shape = guide_legend(override.aes = list(fill = "black")),
+         alpha = guide_legend(override.aes = list(alpha = c(1,1),
+                                                  fill = c("white", "black"),
+                                                  shape = 21)) ) +
+  facet_wrap(~am) +
+  theme_bw()
+```
+
